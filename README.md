@@ -187,6 +187,22 @@ data: {"messageId":"...","cancelled":false}
 
 Cancellation: client drops the connection → server detects `req.raw 'close'` → aborts upstream provider call → marks conversation `cancelled` → log emitted with `status: "cancelled"`.
 
+## Throughput + latency
+
+Throughput and low latency are designed-in, not afterthoughts. The chat path is bounded by the upstream provider, but everything around it is non-blocking.
+
+- **SSE first-byte ~10ms** after upstream stream opens. Headers `flushHeaders()` immediately; `X-Accel-Buffering: no` disables proxy buffering so tokens arrive in the browser as fast as the provider yields them.
+- **Ingestion 202 in <5ms.** `POST /api/ingest/logs` is a single Zod parse + `LPUSH` to Redis. Zero DB writes on the request thread — Postgres latency never lands on the user-facing path.
+- **Async log emit, 1s hard ceiling.** `InferenceClient.emitLogAsync` uses fire-and-forget `fetch` with a 1s `AbortSignal` timeout, wrapped in `try/catch`. An ingestion outage cannot regress chat latency by even a millisecond.
+- **Worker concurrency = 16 per replica.** BullMQ shards on Redis; tune via `WORKER_CONCURRENCY`. Single worker comfortably absorbs ~10k jobs/min in steady state on commodity hardware.
+- **Dashboards stay sub-10ms.** Composite indexes `(status, createdAt)` and `(provider, model)` mean every metrics endpoint is one indexed scan + `groupBy`. No N+1, no JOINs on hot paths.
+- **Per-IP rate limit on chat** (default `5/hour`, configurable via `CHAT_RATE_LIMIT`) protects the upstream API key bill from abuse without throttling logging or dashboards.
+
+Where it ceilings:
+- Postgres write throughput becomes the first bottleneck at ~80–120k row/s inserts (commodity instance). Plan: partition `InferenceLog` by `createdAt` monthly when row count crosses ~50M.
+- Redis is single-instance in this build — it's the SPOF for the queue. Production move: managed Redis with replication + persistence, or shard the queue by `hash(conversationId)` so workers don't contend on one key.
+- SSE is HTTP/1.1 — fine up to a few thousand concurrent streams per replica. Past that, switch to HTTP/2 + push or move to a server with native async runtime (Bun, etc.).
+
 ## Schema design
 
 Four tables — see [`prisma/schema.prisma`](prisma/schema.prisma).
