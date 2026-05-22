@@ -7,7 +7,25 @@ import { inferenceClient } from "../lib/sdk.js";
 const CONTEXT_WINDOW = 20;
 
 export async function registerChatRoutes(app: FastifyInstance) {
-  app.post("/api/chat/stream", async (req, reply) => {
+  app.post(
+    "/api/chat/stream",
+    {
+      config: {
+        rateLimit: {
+          max: Number(process.env.CHAT_RATE_LIMIT ?? 5),
+          timeWindow: "1 hour",
+          keyGenerator: (req) =>
+            (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() ??
+            req.ip,
+          errorResponseBuilder: (_req, ctx) => ({
+            error: "rate_limited",
+            message: `chat limit reached: ${ctx.max} requests per hour. retry in ~${Math.ceil(ctx.ttl / 60000)} min.`,
+            retryAfterSeconds: Math.ceil(ctx.ttl / 1000),
+          }),
+        },
+      },
+    },
+    async (req, reply) => {
     const parsed = ChatStreamRequestSchema.safeParse(req.body);
     if (!parsed.success) {
       reply.code(400);

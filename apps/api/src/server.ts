@@ -1,6 +1,7 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import sensible from "@fastify/sensible";
+import rateLimit from "@fastify/rate-limit";
 import { registerHealthRoute } from "./routes/health.js";
 import { registerConversationsRoutes } from "./routes/conversations.js";
 import { registerChatRoutes } from "./routes/chat.js";
@@ -26,6 +27,12 @@ async function main() {
 
   await app.register(cors, { origin: true, credentials: true });
   await app.register(sensible);
+  // Global default — generous, real lid lives per-route.
+  await app.register(rateLimit, {
+    global: false,
+    max: 600,
+    timeWindow: "1 hour",
+  });
 
   await registerHealthRoute(app);
   await registerConversationsRoutes(app);
