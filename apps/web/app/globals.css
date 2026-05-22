@@ -267,6 +267,12 @@ input, textarea, select {
   flex-direction: column;
   min-width: 0;
   position: relative;
+  overflow-y: auto;
+}
+
+/* Chat page manages its own internal scroll (sticky composer at bottom);
+   keep the outer .main from double-scrolling on that route. */
+.main:has(> .page--chat) {
   overflow: hidden;
 }
 
