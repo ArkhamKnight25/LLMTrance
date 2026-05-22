@@ -1,0 +1,89 @@
+namespace: llmtrace
+
+image:
+  registry: ghcr.io/arkhamknight25
+  api:
+    repository: llmtrace-api
+    tag: latest
+  worker:
+    repository: llmtrace-worker
+    tag: latest
+  web:
+    repository: llmtrace-web
+    tag: latest
+  pullPolicy: Always
+
+config:
+  nodeEnv: production
+  port: "3232"
+  workerConcurrency: "16"
+
+secrets:
+  # Override on install with --set-string secrets.openaiApiKey=sk-...
+  # OR create the secret manually and set secrets.create=false
+  create: true
+  openaiApiKey: ""
+  anthropicApiKey: ""
+  ingestionApiKey: "change-me-strong-random-string"
+
+postgres:
+  enabled: true
+  storageSize: 5Gi
+  user: llmtrace
+  password: llmtrace
+  database: llmtrace
+
+redis:
+  enabled: true
+
+api:
+  replicas: 2
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+
+worker:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  keda:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 20
+    listLengthPerPod: 25
+    pollingIntervalSeconds: 10
+
+web:
+  replicas: 2
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 75
+
+ingress:
+  enabled: true
+  className: nginx
+  host: llmtrace.local
+  tls: false

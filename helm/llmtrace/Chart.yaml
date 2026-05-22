@@ -1,0 +1,15 @@
+apiVersion: v2
+name: llmtrace
+description: Lightweight LLM inference observability platform
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - llm
+  - observability
+  - logging
+  - inference
+sources:
+  - https://github.com/ArkhamKnight25/LLMTrance
+maintainers:
+  - name: arkhamknight25

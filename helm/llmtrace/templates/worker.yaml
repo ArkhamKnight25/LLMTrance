@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: worker
+    {{- include "llmtrace.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.worker.replicas }}
+  selector:
+    matchLabels:
+      app: worker
+  template:
+    metadata:
+      labels:
+        app: worker
+    spec:
+      containers:
+        - name: worker
+          image: {{ include "llmtrace.workerImage" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          envFrom:
+            - configMapRef:
+                name: llmtrace-config
+            - secretRef:
+                name: llmtrace-secrets
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+{{- if .Values.worker.keda.enabled }}
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: worker
+  namespace: {{ .Values.namespace }}
+spec:
+  scaleTargetRef:
+    name: worker
+  pollingInterval: {{ .Values.worker.keda.pollingIntervalSeconds }}
+  cooldownPeriod: 60
+  minReplicaCount: {{ .Values.worker.keda.minReplicas }}
+  maxReplicaCount: {{ .Values.worker.keda.maxReplicas }}
+  triggers:
+    - type: redis
+      metadata:
+        address: redis.{{ .Values.namespace }}.svc.cluster.local:6379
+        listName: "bull:inference-log:wait"
+        listLength: "{{ .Values.worker.keda.listLengthPerPod }}"
+        enableTLS: "false"
+{{- end }}

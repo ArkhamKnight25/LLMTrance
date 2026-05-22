@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: llmtrace-config
+  namespace: {{ .Values.namespace }}
+data:
+  NODE_ENV: {{ .Values.config.nodeEnv | quote }}
+  PORT: {{ .Values.config.port | quote }}
+  WORKER_CONCURRENCY: {{ .Values.config.workerConcurrency | quote }}
+  DATABASE_URL: "postgresql://{{ .Values.postgres.user }}:{{ .Values.postgres.password }}@postgres.{{ .Values.namespace }}.svc.cluster.local:5432/{{ .Values.postgres.database }}"
+  REDIS_URL: "redis://redis.{{ .Values.namespace }}.svc.cluster.local:6379"
+  INGEST_URL: "http://api.{{ .Values.namespace }}.svc.cluster.local:3232"
+  NEXT_PUBLIC_API_URL: "http://api.{{ .Values.namespace }}.svc.cluster.local:3232"
+  WEB_API_URL: "http://api.{{ .Values.namespace }}.svc.cluster.local:3232"
