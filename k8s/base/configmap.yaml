@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: llmtrace-config
+  namespace: llmtrace
+data:
+  NODE_ENV: "production"
+  PORT: "3232"
+  WORKER_CONCURRENCY: "16"
+  NEXT_PUBLIC_API_URL: "http://api.llmtrace.svc.cluster.local:3232"
+  WEB_API_URL: "http://api.llmtrace.svc.cluster.local:3232"
+  INGEST_URL: "http://api.llmtrace.svc.cluster.local:3232"
+  DATABASE_URL: "postgresql://llmtrace:llmtrace@postgres.llmtrace.svc.cluster.local:5432/llmtrace"
+  REDIS_URL: "redis://redis.llmtrace.svc.cluster.local:6379"

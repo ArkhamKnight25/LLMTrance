@@ -1,0 +1,28 @@
+# One-shot Job that runs `prisma migrate deploy` before the api deployment serves traffic.
+# Re-apply when schema changes; safe to leave around (Job won't re-run on its own).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: prisma-migrate
+  namespace: llmtrace
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: migrate
+          image: ghcr.io/arkhamknight25/llmtrace-api:latest
+          command: ["sh", "-c", "pnpm prisma:migrate"]
+          envFrom:
+            - configMapRef:
+                name: llmtrace-config
+            - secretRef:
+                name: llmtrace-secrets
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
