@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: llmtrace
+  labels:
+    app: worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: worker
+  template:
+    metadata:
+      labels:
+        app: worker
+    spec:
+      containers:
+        - name: worker
+          image: ghcr.io/arkhamknight25/llmtrace-worker:latest
+          imagePullPolicy: Always
+          envFrom:
+            - configMapRef:
+                name: llmtrace-config
+            - secretRef:
+                name: llmtrace-secrets
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+# KEDA ScaledObject — autoscales worker pods on Redis list length.
+# BullMQ stores pending jobs in a list at `bull:<queueName>:wait`.
+# Replace `redis-host` and install KEDA first:
+#   helm repo add kedacore https://kedacore.github.io/charts
+#   helm install keda kedacore/keda --namespace keda --create-namespace
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: redis-auth
+  namespace: llmtrace
+spec:
+  secretTargetRef: []
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: worker
+  namespace: llmtrace
+spec:
+  scaleTargetRef:
+    name: worker
+  pollingInterval: 10        # check redis every 10s
+  cooldownPeriod: 60         # 60s before scaling down
+  idleReplicaCount: 1        # min when queue empty
+  minReplicaCount: 1
+  maxReplicaCount: 20
+  triggers:
+    - type: redis
+      metadata:
+        address: redis.llmtrace.svc.cluster.local:6379
+        listName: "bull:inference-log:wait"
+        listLength: "25"     # one extra pod per 25 pending jobs
+        enableTLS: "false"
