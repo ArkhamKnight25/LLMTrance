@@ -1,12 +1,10 @@
 import { Queue } from "bullmq";
-import { Redis } from "ioredis";
 import { INFERENCE_LOG_QUEUE } from "@llmtrace/shared";
+import { makeRedis } from "./redis.js";
 
 const REDIS_URL = process.env.REDIS_URL ?? "redis://localhost:6379";
 
-export const redisConnection = new Redis(REDIS_URL, {
-  maxRetriesPerRequest: null,
-});
+export const redisConnection = makeRedis(REDIS_URL);
 
 export const inferenceLogQueue = new Queue(INFERENCE_LOG_QUEUE, {
   connection: redisConnection,

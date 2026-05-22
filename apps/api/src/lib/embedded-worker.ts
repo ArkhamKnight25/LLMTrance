@@ -1,7 +1,7 @@
 import { Worker, type Job } from "bullmq";
-import { Redis } from "ioredis";
 import { INFERENCE_LOG_QUEUE, InferenceLogPayloadSchema, type InferenceLogPayload } from "@llmtrace/shared";
 import { prisma } from "./prisma.js";
+import { makeRedis } from "./redis.js";
 
 /**
  * Embedded BullMQ worker. Same code path as apps/worker, runs in the api
@@ -13,7 +13,7 @@ export function startEmbeddedWorker(log: { info: (...a: unknown[]) => void; erro
   const REDIS_URL = process.env.REDIS_URL ?? "redis://localhost:6379";
   const CONCURRENCY = Number(process.env.WORKER_CONCURRENCY ?? 8);
 
-  const connection = new Redis(REDIS_URL, { maxRetriesPerRequest: null });
+  const connection = makeRedis(REDIS_URL);
 
   async function processJob(job: Job<InferenceLogPayload>) {
     const parsed = InferenceLogPayloadSchema.safeParse(job.data);
