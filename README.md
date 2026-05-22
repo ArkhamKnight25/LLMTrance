@@ -2,6 +2,18 @@
 
 Lightweight inference observability platform for LLM applications. Multi-provider chat (OpenAI, Anthropic), streaming with cancellation, conversation persistence, async log ingestion, dashboards.
 
+## Live demo
+
+| | URL |
+|---|---|
+| Web (Next.js, Vercel) | https://llm-trance-4rex.vercel.app |
+| API (Fastify, Render) | https://llmtrace-api.onrender.com |
+| Health | https://llmtrace-api.onrender.com/healthz |
+| Diagnostics (deps) | https://llmtrace-api.onrender.com/health |
+| Recent logs (json) | https://llmtrace-api.onrender.com/api/inference-logs/recent?limit=10 |
+
+Cold start: api sleeps after 15min idle on Render free; UptimeRobot pings `/healthz` every 5min to keep it warm. First request after a true cold may take ~30s.
+
 ## Architecture
 
 ```
@@ -39,6 +51,8 @@ chat req → /api/chat/stream → SDK.stream() → provider SSE
                                   worker → Prisma → Postgres
 ```
 
+Production deploy collapses worker into the api process (`EMBED_WORKER=true`) because Render's free tier doesn't support background workers. Locally `docker compose up` still runs api and worker as separate containers — the queue boundary stays observable in dev.
+
 ## Layout
 
 ```
@@ -46,89 +60,40 @@ llmtrace/
   apps/
     api/         Fastify SSE + REST + ingest
     worker/      BullMQ consumer
-    web/         Next.js frontend (Phase 2)
+    web/         Next.js 14 frontend
   packages/
-    shared/      Zod schemas + TS types
+    shared/         Zod schemas + TS types
     inference-sdk/  Provider adapters, PII redaction, async emitter
   prisma/
     schema.prisma
     migrations/
   docker-compose.yml
+  render.yaml             ← Render Blueprint
+  apps/web/vercel.json    ← Vercel build config
+  .github/workflows/keepalive.yml  ← optional keep-alive cron
 ```
 
-## Quick start
+## Quick start — Docker (one command)
 
-Prereqs: Docker Desktop, pnpm (only for local dev outside containers).
-
-1. Copy env:
+Prereqs: Docker Desktop, OpenAI API key.
 
 ```bash
 cp .env.example .env
-# fill OPENAI_API_KEY (required for chat demo)
-# ANTHROPIC_API_KEY optional
-```
-
-2. Boot stack:
-
-```bash
+# edit .env, set OPENAI_API_KEY
 docker compose up --build
 ```
 
-Brings up: `postgres`, `redis`, `api` (3232), `worker`. Web (Next.js, port 3233) is gated behind the `web` profile:
-
-```bash
-docker compose --profile web up --build
-```
-
-### Local dev without Docker
-
-Postgres + Redis only via Docker; api, worker, web run on host with pnpm:
-
-```bash
-docker compose up postgres redis -d
-pnpm install
-pnpm --filter @llmtrace/shared build
-pnpm --filter @llmtrace/inference-sdk build
-pnpm --filter @llmtrace/api prisma:generate
-DATABASE_URL='postgresql://llmtrace:llmtrace@localhost:5432/llmtrace' \
-  pnpm prisma:deploy
-# put localhost-flavored vars in a root .env, then:
-pnpm dev   # api (:3232) + worker + web (:3233) concurrently
-```
-
-Root `.env` for host-mode dev:
-
-```
-OPENAI_API_KEY=sk-...
-DATABASE_URL=postgresql://llmtrace:llmtrace@localhost:5432/llmtrace
-REDIS_URL=redis://localhost:6379
-INGESTION_API_KEY=local-dev-key
-INGEST_URL=http://localhost:3232
-PORT=3232
-NEXT_PUBLIC_API_URL=http://localhost:3232
-```
+Brings up: `postgres` (5444→5432), `redis` (6379), `api` (3232), `worker`, `web` (3233).
 
 Open http://localhost:3233.
 
-## Frontend pages
-
-- `/` — empty chat with prompt suggestions, model selector, streaming + cancel
-- `/conversations/[id]` — resume any conversation, full history hydrated server-side
-- `/conversations` — list with status filters (active / completed / cancelled / error), click to resume
-- `/dashboard` — 6 stat cards + throughput, latency (p50/avg/p95), token usage by model, provider breakdown, latency-by-model, recent logs. Auto-refresh 5s.
-- `/inference-logs` — full table with status + provider filters, auto-refresh 5s
-
-All frontend routes are wired to the real API; nothing is mocked.
-
-3. Verify:
-
+Verify:
 ```bash
 curl http://localhost:3232/health
-# { "status":"ok", "db":"ok", "redis":"ok" }
+# { "status":"ok", "checks":{"api":"ok","postgres":"ok","redis":"ok"} }
 ```
 
-4. Smoke-test ingestion (no LLM call needed):
-
+Smoke-test ingestion (no LLM call needed):
 ```bash
 curl -X POST http://localhost:3232/api/ingest/logs \
   -H 'content-type: application/json' \
@@ -142,43 +107,70 @@ curl -X POST http://localhost:3232/api/ingest/logs \
     "inputTokens":42,
     "outputTokens":120,
     "totalTokens":162,
-    "inputPreview":"hello",
-    "outputPreview":"hi there",
     "startedAt":"2026-05-22T10:00:00.000Z",
     "completedAt":"2026-05-22T10:00:00.820Z"
   }'
 # 202 Accepted
 ```
 
-Then check it landed in Postgres:
-
+Then check it landed:
 ```bash
 docker compose exec postgres psql -U llmtrace -d llmtrace -c \
   'select request_id, provider, model, status, latency_ms from "InferenceLog" order by created_at desc limit 5;'
 ```
 
-5. Stream a chat (requires OPENAI_API_KEY):
+## Quick start — host mode (no Docker for app code)
+
+Postgres + Redis in Docker, api/worker/web on host with HMR:
 
 ```bash
-curl -N -X POST http://localhost:3232/api/chat/stream \
-  -H 'content-type: application/json' \
-  -d '{"message":"Say hi in two words","provider":"openai","model":"gpt-4o-mini"}'
+docker compose up postgres redis -d
+pnpm install
+pnpm --filter @llmtrace/shared build
+pnpm --filter @llmtrace/inference-sdk build
+pnpm --filter @llmtrace/api prisma:generate
+DATABASE_URL='postgresql://llmtrace:llmtrace@localhost:5444/llmtrace' pnpm prisma:deploy
+pnpm dev   # api (:3232) + worker + web (:3233) concurrently
 ```
 
-## Endpoints
+Root `.env` for host mode:
+
+```
+OPENAI_API_KEY=sk-...
+DATABASE_URL=postgresql://llmtrace:llmtrace@localhost:5444/llmtrace
+REDIS_URL=redis://localhost:6379
+INGESTION_API_KEY=local-dev-key
+INGEST_URL=http://localhost:3232
+PORT=3232
+NEXT_PUBLIC_API_URL=http://localhost:3232
+```
+
+## Frontend pages
+
+- `/` — empty chat with prompt suggestions, model selector, streaming + cancel
+- `/conversations/[id]` — resume any conversation, full history hydrated server-side
+- `/conversations` — list with status filters (active / completed / cancelled / error), click to resume
+- `/dashboard` — six stat cards + throughput, latency (p50/avg/p95), token usage by model, provider breakdown, latency-by-model, recent logs. Auto-refresh 5s
+- `/inference-logs` — table with status + provider filters, auto-refresh 5s
+
+All routes hit the real API; nothing is mocked.
+
+## API endpoints
 
 | Method | Path | Notes |
 |---|---|---|
-| GET  | `/health` | DB + Redis ping |
+| GET | `/healthz` | fast readiness probe (always 200) |
+| GET | `/health` | DB + Redis ping with 3s timeouts each |
 | POST | `/api/conversations` | create conversation |
-| GET  | `/api/conversations` | list (paged) |
-| GET  | `/api/conversations/:id/messages` | full history |
-| PATCH| `/api/conversations/:id` | update status (e.g. `cancelled`) |
+| GET | `/api/conversations` | list (paged) |
+| GET | `/api/conversations/:id/messages` | full history |
+| PATCH | `/api/conversations/:id` | update status (e.g. `cancelled`) |
 | POST | `/api/chat/stream` | SSE — events: `start`, `token`, `error`, `done` |
-| POST | `/api/ingest/logs` | returns 202 before any DB write |
-| GET  | `/api/metrics/summary?range=24h` | summary cards |
-| GET  | `/api/metrics/timeseries?range=24h` | throughput + latency buckets |
-| GET  | `/api/metrics/providers?range=24h` | per-provider breakdown |
+| POST | `/api/ingest/logs` | x-api-key required, returns 202 before any DB write |
+| GET | `/api/metrics/summary?range=24h` | totals + rates |
+| GET | `/api/metrics/timeseries?range=24h` | 60 buckets, throughput + latency |
+| GET | `/api/metrics/providers?range=24h` | per-provider/model breakdown |
+| GET | `/api/inference-logs/recent?limit=25` | tail of inference log table |
 
 SSE envelope:
 
@@ -193,70 +185,93 @@ event: done
 data: {"messageId":"...","cancelled":false}
 ```
 
-Cancellation: client drops connection → server detects `req.raw 'close'` → aborts upstream provider call → marks conversation `cancelled` → log emitted with `status: "cancelled"`.
+Cancellation: client drops the connection → server detects `req.raw 'close'` → aborts upstream provider call → marks conversation `cancelled` → log emitted with `status: "cancelled"`.
 
 ## Schema design
 
-Four tables — see `prisma/schema.prisma`.
+Four tables — see [`prisma/schema.prisma`](prisma/schema.prisma).
 
-- `Conversation` — id, title, status (`active|completed|cancelled`), timestamps.
-- `ChatMessage` — role, content, optional provider/model on assistant turns. FK cascade.
-- `InferenceLog` — append-only audit row. Unique `requestId` enables idempotent retries from the worker. Indexed on `(status, createdAt)`, `(provider, model)`, plus singles on `provider`, `model`, `status`, `createdAt`, `conversationId`. `conversationId` is `SET NULL` so we never lose log history when a conversation is deleted.
-- `IngestionError` — DLQ-style table. Worker writes here after final retry, preserving raw payload for replay.
+- **Conversation** — id, title, status (`active | completed | cancelled | error`), timestamps
+- **ChatMessage** — role, content, optional provider/model on assistant turns, FK cascade
+- **InferenceLog** — append-only audit row. Unique `requestId` enables idempotent retries. Indexed on `(status, createdAt)`, `(provider, model)`, plus singles on `provider`, `model`, `status`, `createdAt`, `conversationId`. `conversationId` is `SET NULL` so log history survives conversation deletion
+- **IngestionError** — DLQ table. Worker writes here after final retry, preserving raw payload for replay
 
 Tradeoffs:
-- One denormalized `InferenceLog` row per request, not a separate `events` table. Dashboards stay one-query.
-- `metadata` Jsonb for future fields without migrations.
-- No vector embeddings / no message-level token stats — only request-level usage. Cheaper, sufficient for observability scope.
+- Denormalized: one row per request, not a separate events table. Dashboards are one query
+- `metadata` JSONB for future fields without migrations
+- Request-level token usage only — no per-message embeddings. Cheaper, sufficient for observability scope
 
 ## Logging strategy
 
-- Hot path never blocks on logging. `InferenceClient.emitLogAsync` uses fire-and-forget `fetch` with a 1s `AbortSignal` timeout and a try/catch wrapper. Failures are swallowed.
-- Ingestion endpoint returns **202 before any DB write**. It only validates with Zod and enqueues to BullMQ.
-- Worker is the only writer to `InferenceLog`. Backpressure, retries (5 attempts, exponential backoff from 1s), and idempotency (`requestId` unique) all live there.
-- Failed jobs after final retry land in `IngestionError` with raw payload preserved.
+- Hot path never blocks on logging. `InferenceClient.emitLogAsync` uses fire-and-forget `fetch` with a 1s `AbortSignal` timeout and a `try/catch` wrapper. Failures are swallowed
+- Ingestion endpoint returns **202 before any DB write**. It only validates with Zod and enqueues to BullMQ
+- Worker is the only writer to `InferenceLog`. Backpressure, retries (5 attempts, exponential backoff from 1s), and idempotency (`requestId` unique) all live there
+- Failed jobs after final retry land in `IngestionError` with raw payload preserved
 
 ## PII redaction
 
-`packages/inference-sdk/src/redact.ts` masks before previews leave the process:
+[`packages/inference-sdk/src/redact.ts`](packages/inference-sdk/src/redact.ts) masks before previews leave the process:
 
-- emails → `[redacted-email]`
-- phone numbers (10+ digits) → `[redacted-phone]`
-- credit card patterns (13–19 digits) → `[redacted-cc]`
-- API keys (`sk-...`, `Bearer ...`) → `[redacted-key]`
-- JWTs → `[redacted-jwt]`
+- emails → `[email]`
+- phone numbers (10+ digits) → `[phone]`
+- credit card patterns (13–19 digits) → `[card]`
+- API keys (`sk-...`, `Bearer ...`) → `[redacted]`
+- JWTs → `[jwt]`
 
-Only `inputPreview` / `outputPreview` are redacted (≤300 chars). Full message bodies live in `ChatMessage` and are never sent to the ingestion API.
+Only `inputPreview` / `outputPreview` are redacted (≤300 chars). Full message bodies live in `ChatMessage` and never leave the api process via the ingestion path.
 
 ## Scaling considerations
 
-- API is stateless behind the SSE endpoint. Horizontal scale fine until you need sticky cancellation; cancellation here is connection-local so any replica works.
-- Worker scales horizontally — BullMQ partitions by Redis. Bump `WORKER_CONCURRENCY` (default 16) per replica.
-- Postgres is the first bottleneck. `InferenceLog` is write-heavy + read-heavy. Partition by `createdAt` (monthly) when row count crosses ~50M.
-- Redis is single-instance here. Production: managed Redis (ElastiCache/Upstash) with persistence enabled so in-flight jobs survive restart.
-- Streaming uses HTTP/1.1 SSE. Behind a proxy disable buffering (`X-Accel-Buffering: no` is set).
+- API is stateless behind the SSE endpoint. Horizontal scale is fine. Cancellation is connection-local so any replica works
+- Worker scales horizontally — BullMQ partitions by Redis. Tune `WORKER_CONCURRENCY` (default 16) per replica
+- Postgres is the first bottleneck under sustained write. `InferenceLog` is write-heavy + read-heavy. Plan to partition by `createdAt` (monthly) when row count crosses ~50M
+- Redis is single-instance here. Production: managed Redis (Upstash / ElastiCache) with persistence so in-flight jobs survive restart
+- Streaming uses HTTP/1.1 SSE. Behind a proxy, disable buffering (`X-Accel-Buffering: no` is set)
 
 ## Failure handling
 
 | Failure | Behavior |
 |---|---|
 | Provider error mid-stream | SSE `error` event, log row `status=error`, conversation stays `active` |
-| Client disconnect | Detected via `req.raw 'close'`, upstream aborted, conversation marked `cancelled`, log `status=cancelled` |
+| Client disconnect | `req.raw 'close'`, upstream aborted, conversation marked `cancelled`, log `status=cancelled` |
 | Ingest API down | SDK times out at 1s, drops the log, chat continues normally |
-| Redis down | Ingest API returns 503 on enqueue, but `/api/chat/stream` still serves tokens (ingest is fire-and-forget from the chat path) |
+| Redis down | Ingest enqueue fails; `/api/chat/stream` keeps serving tokens (ingest is fire-and-forget from the chat path). Logs land in `IngestionError` once Redis returns |
 | Worker crash | BullMQ re-delivers on restart; idempotency via unique `requestId` |
 | Final retry fail | Row written to `IngestionError` with raw payload |
 
+## Assignment + bonus checklist
+
+**Core**
+- [x] Multi-turn chatbot — OpenAI (gpt-4o-mini / 4o / 4.1) + Anthropic (claude-3-5-sonnet-latest)
+- [x] Short conversational context — last 20 messages loaded per request
+- [x] Simple UI — Next.js 14 at `/`
+- [x] SDK captures model, provider, latency, tokens, timestamps, status, errors, conversation ID, input/output previews
+- [x] SDK posts logs in near-real-time (fire-and-forget HTTP)
+- [x] Ingestion API validates with Zod, enqueues to BullMQ, returns 202
+- [x] Stores chat messages, inference logs, JSONB metadata in Postgres via Prisma
+
+**Bonus**
+- [x] Multi-provider support (OpenAI + Anthropic)
+- [x] Streaming responses (SSE)
+- [x] Latency + throughput + error dashboards (p50/avg/p95)
+- [x] Docker Compose one-command setup
+- [x] Event-driven architecture (BullMQ on Redis between api and worker)
+- [x] PII redaction (email / phone / cc / sk- keys / Bearer / JWT)
+- [x] Frontend: cancel a conversation
+- [x] Frontend: list conversations
+- [x] Frontend: resume a conversation
+- [ ] Deploy on self-hosted k8s — in progress on `feature/k8s-scaling` branch (Helm chart + KEDA HPA tied to BullMQ queue depth)
+
 ## What I'd improve with more time
 
-- `ChatMessage` token counts (not just request-level).
-- Server-sent rate limiting per `INGESTION_API_KEY`.
-- OpenTelemetry traces linking chat request → ingest enqueue → worker write.
-- KEDA HPA targeting BullMQ queue depth (k8s branch).
-- Tests: unit on PII redaction + Zod schemas, integration on `/api/chat/stream` with a fake provider.
-- Anthropic provider currently maps `system` messages to a single `system` arg by joining — should be smarter.
-- Per-conversation rolling summary instead of fixed 20-message window.
+- ChatMessage-level token counts (not just request-level)
+- Server-sent rate limiting per `INGESTION_API_KEY`
+- OpenTelemetry traces linking chat request → ingest enqueue → worker write
+- KEDA HPA tied to queue depth (next on `feature/k8s-scaling`)
+- Tests: unit on PII redaction + Zod schemas, integration on `/api/chat/stream` with a fake provider
+- Anthropic provider currently joins `system` messages by `\n\n` — should be smarter
+- Per-conversation rolling summary instead of fixed 20-message context window
 
-## Status: Phase 1
+## License
 
-Backend foundation complete. Frontend (`apps/web`) deferred to Phase 2 — design assets are in `_design/` and the API contract is finalized.
+MIT (or whatever the assignment defaults to — happy to relicense on request).
