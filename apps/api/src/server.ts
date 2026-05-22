@@ -6,6 +6,7 @@ import { registerConversationsRoutes } from "./routes/conversations.js";
 import { registerChatRoutes } from "./routes/chat.js";
 import { registerIngestRoutes } from "./routes/ingest.js";
 import { registerMetricsRoutes } from "./routes/metrics.js";
+import { startEmbeddedWorker } from "./lib/embedded-worker.js";
 
 const PORT = Number(process.env.PORT ?? 3232);
 const HOST = process.env.HOST ?? "0.0.0.0";
@@ -44,6 +45,10 @@ async function main() {
 
   await app.listen({ port: PORT, host: HOST });
   app.log.info(`api listening on :${PORT}`);
+
+  if (process.env.EMBED_WORKER === "true") {
+    startEmbeddedWorker(app.log);
+  }
 }
 
 main().catch((err) => {
