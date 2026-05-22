@@ -12,3 +12,7 @@ prisma/migrations/dev.db*
 
 #dir
 ref/
+
+# k8s real secrets (only the .example.yaml is tracked)
+k8s/**/secrets.yaml
+k8s/**/secret.yaml
