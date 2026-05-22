@@ -1,0 +1,49 @@
+# Ingress assumes nginx-ingress controller is installed:
+#   helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+#   helm install ingress-nginx ingress-nginx/ingress-nginx \
+#     --namespace ingress-nginx --create-namespace
+#
+# Replace the host below with your real domain or .local for kind/minikube.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: llmtrace
+  namespace: llmtrace
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"      # SSE: don't buffer
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: llmtrace.local
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: api
+                port:
+                  number: 3232
+          - path: /health
+            pathType: Prefix
+            backend:
+              service:
+                name: api
+                port:
+                  number: 3232
+          - path: /healthz
+            pathType: Exact
+            backend:
+              service:
+                name: api
+                port:
+                  number: 3232
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  number: 80
