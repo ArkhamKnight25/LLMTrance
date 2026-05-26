@@ -53,5 +53,5 @@ export const InferenceLogPayloadSchema = z.object({
 });
 export type InferenceLogPayload = z.infer<typeof InferenceLogPayloadSchema>;
 
-export const MetricsRangeSchema = z.enum(["15m", "1h", "6h", "24h", "7d"]);
+export const MetricsRangeSchema = z.enum(["15m", "1h", "6h", "24h", "7d", "all"]);
 export type MetricsRange = z.infer<typeof MetricsRangeSchema>;

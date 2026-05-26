@@ -5,7 +5,10 @@ import { usePathname } from "next/navigation";
 import { Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
 import { api } from "@/lib/api";
+import { apiBase } from "@/lib/api-base";
 import type { Conversation } from "@/types";
+
+const KEEPALIVE_MS = 10 * 60 * 1000;
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -25,6 +28,22 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     refresh();
     const t = setInterval(refresh, 8000);
     return () => clearInterval(t);
+  }, []);
+
+  useEffect(() => {
+    const ping = () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      fetch(`${apiBase()}/healthz`, { cache: "no-store", keepalive: true }).catch(() => {});
+    };
+    const t = setInterval(ping, KEEPALIVE_MS);
+    const onVisible = () => {
+      if (!document.hidden) ping();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, []);
 
   useEffect(() => {

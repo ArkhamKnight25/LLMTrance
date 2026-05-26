@@ -8,13 +8,22 @@ const RANGE_MS: Record<string, number> = {
   "6h": 6 * 60 * 60_000,
   "24h": 24 * 60 * 60_000,
   "7d": 7 * 24 * 60 * 60_000,
+  "all": 0,
 };
 
-function rangeFrom(req: { query: unknown }): { ms: number; key: string } {
+function rangeFrom(
+  req: { query: unknown }
+): { ms: number; key: string; since: Date | null } {
   const q = req.query as { range?: string };
   const parsed = MetricsRangeSchema.safeParse(q.range ?? "24h");
   const key = parsed.success ? parsed.data : "24h";
-  return { ms: RANGE_MS[key]!, key };
+  if (key === "all") return { ms: 0, key, since: null };
+  const ms = RANGE_MS[key]!;
+  return { ms, key, since: new Date(Date.now() - ms) };
+}
+
+function whereSince(since: Date | null) {
+  return since ? { createdAt: { gte: since } } : {};
 }
 
 function percentile(values: number[], p: number): number {
@@ -29,21 +38,21 @@ function percentile(values: number[], p: number): number {
 
 export async function registerMetricsRoutes(app: FastifyInstance) {
   app.get("/api/metrics/summary", async (req) => {
-    const { ms } = rangeFrom(req);
-    const since = new Date(Date.now() - ms);
+    const { since } = rangeFrom(req);
+    const base = whereSince(since);
 
     const [total, errors, latencies, tokens] = await Promise.all([
-      prisma.inferenceLog.count({ where: { createdAt: { gte: since } } }),
+      prisma.inferenceLog.count({ where: base }),
       prisma.inferenceLog.count({
-        where: { createdAt: { gte: since }, status: "error" },
+        where: { ...base, status: "error" },
       }),
       prisma.inferenceLog.findMany({
-        where: { createdAt: { gte: since }, latencyMs: { not: null } },
+        where: { ...base, latencyMs: { not: null } },
         select: { latencyMs: true },
         take: 50_000,
       }),
       prisma.inferenceLog.aggregate({
-        where: { createdAt: { gte: since } },
+        where: base,
         _sum: { totalTokens: true },
       }),
     ]);
@@ -63,13 +72,24 @@ export async function registerMetricsRoutes(app: FastifyInstance) {
   });
 
   app.get("/api/metrics/timeseries", async (req) => {
-    const { ms, key } = rangeFrom(req);
-    const since = new Date(Date.now() - ms);
+    const { key, since: sinceArg } = rangeFrom(req);
     const buckets = 60;
-    const bucketMs = Math.floor(ms / buckets);
+    let windowStart: Date;
+    if (sinceArg) {
+      windowStart = sinceArg;
+    } else {
+      const oldest = await prisma.inferenceLog.findFirst({
+        orderBy: { createdAt: "asc" },
+        select: { createdAt: true },
+      });
+      windowStart = oldest?.createdAt ?? new Date(Date.now() - 60_000);
+    }
+    const now = Date.now();
+    const ms = Math.max(now - windowStart.getTime(), buckets);
+    const bucketMs = Math.max(1, Math.floor(ms / buckets));
 
     const rows = await prisma.inferenceLog.findMany({
-      where: { createdAt: { gte: since } },
+      where: { createdAt: { gte: windowStart } },
       select: { createdAt: true, status: true, latencyMs: true },
       take: 50_000,
     });
@@ -77,7 +97,7 @@ export async function registerMetricsRoutes(app: FastifyInstance) {
     const arr = Array.from({ length: buckets }, (_, i) => ({
       bucket: i,
       bucketStart: new Date(
-        since.getTime() + i * bucketMs
+        windowStart.getTime() + i * bucketMs
       ).toISOString(),
       requests: 0,
       errors: 0,
@@ -87,7 +107,7 @@ export async function registerMetricsRoutes(app: FastifyInstance) {
     for (const r of rows) {
       const idx = Math.min(
         buckets - 1,
-        Math.floor((r.createdAt.getTime() - since.getTime()) / bucketMs)
+        Math.floor((r.createdAt.getTime() - windowStart.getTime()) / bucketMs)
       );
       if (idx < 0) continue;
       arr[idx]!.requests++;
@@ -114,12 +134,12 @@ export async function registerMetricsRoutes(app: FastifyInstance) {
   });
 
   app.get("/api/metrics/providers", async (req) => {
-    const { ms } = rangeFrom(req);
-    const since = new Date(Date.now() - ms);
+    const { since } = rangeFrom(req);
+    const base = whereSince(since);
 
     const grouped = await prisma.inferenceLog.groupBy({
       by: ["provider", "model"],
-      where: { createdAt: { gte: since } },
+      where: base,
       _count: { _all: true },
       _sum: { inputTokens: true, outputTokens: true },
     });
@@ -128,7 +148,7 @@ export async function registerMetricsRoutes(app: FastifyInstance) {
       grouped.map(async (g) => {
         const lats = await prisma.inferenceLog.findMany({
           where: {
-            createdAt: { gte: since },
+            ...base,
             provider: g.provider,
             model: g.model,
             latencyMs: { not: null },
@@ -138,7 +158,7 @@ export async function registerMetricsRoutes(app: FastifyInstance) {
         });
         const errors = await prisma.inferenceLog.count({
           where: {
-            createdAt: { gte: since },
+            ...base,
             provider: g.provider,
             model: g.model,
             status: "error",

@@ -22,6 +22,7 @@ const RANGES: [string, string][] = [
   ["6h", "6h"],
   ["24h", "24h"],
   ["7d", "7d"],
+  ["all", "All"],
 ];
 
 export function DashboardPage() {
@@ -36,9 +37,9 @@ export function DashboardPage() {
   const refresh = useCallback(async () => {
     try {
       const [s, t, p, l] = await Promise.all([
-        api.metricsSummary("24h"),
+        api.metricsSummary(range),
         api.metricsTimeseries(range),
-        api.metricsProviders("24h"),
+        api.metricsProviders(range),
         api.recentLogs(25),
       ]);
       setSummary(s);
@@ -80,7 +81,7 @@ export function DashboardPage() {
           </h1>
           <div className="dash__dek">
             {summary
-              ? `${fmtNum(summary.totalRequests)} requests over the last 24 hours · p95 latency ${sec(summary.p95LatencyMs)}s · ${(summary.errorRate * 100).toFixed(2)}% error rate.`
+              ? `${fmtNum(summary.totalRequests)} requests ${range === "all" ? "all-time" : `over the last ${range}`} · p95 latency ${sec(summary.p95LatencyMs)}s · ${(summary.errorRate * 100).toFixed(2)}% error rate.`
               : loading
                 ? "Loading metrics…"
                 : "No inference data yet — send a chat message to populate this dashboard."}
@@ -99,7 +100,7 @@ export function DashboardPage() {
             ))}
           </div>
           <div className="mono" style={{ fontSize: 11, color: "var(--ink-4)" }}>
-            Window: last {range} · auto-refresh every 5s
+            Window: {range === "all" ? "all time" : `last ${range}`} · auto-refresh every 5s
           </div>
         </div>
       </div>
@@ -154,7 +155,7 @@ export function DashboardPage() {
                 className="mono"
                 style={{ fontSize: 10.5, color: "var(--ink-4)", letterSpacing: 0.04 }}
               >
-                last {range} · errors overlaid in{" "}
+                {range === "all" ? "all time" : `last ${range}`} · errors overlaid in{" "}
                 <span style={{ color: "var(--accent)" }}>accent</span>
               </div>
             </div>
@@ -211,7 +212,7 @@ export function DashboardPage() {
             <div>
               <div className="chart-cell__title">Token usage by model</div>
               <div className="mono" style={{ fontSize: 10.5, color: "var(--ink-4)" }}>
-                input + output, last 24h
+                input + output, {range === "all" ? "all time" : `last ${range}`}
               </div>
             </div>
             <div className="legend">
